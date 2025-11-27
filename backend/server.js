@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // ==================== MONGODB SETUP ====================
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/turntracker';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb';
 
 // User Schema
 const userSchema = new mongoose.Schema({
@@ -235,6 +235,44 @@ app.delete('/api/options/:id', async (req, res) => {
     res.json({ message: 'Option deleted successfully' });
   } catch (err) {
     console.error('Delete option error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Edit option name
+app.put('/api/options/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, userId } = req.body;
+    
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Option name is required' });
+    }
+    
+    const option = await Option.findById(id);
+    if (!option) {
+      return res.status(404).json({ error: 'Option not found' });
+    }
+    
+    // Check if user is in the option or is the creator
+    const userInOption = option.persons.find(p => p.userId === userId);
+    if (!userInOption && option.createdBy !== userId) {
+      return res.status(403).json({ error: 'Only members can edit this option' });
+    }
+    
+    option.name = name.trim();
+    await option.save();
+    
+    res.json({
+      id: option._id.toString(),
+      name: option.name,
+      persons: option.persons,
+      currentIndex: option.currentIndex,
+      createdBy: option.createdBy,
+      pendingActions: option.pendingActions
+    });
+  } catch (err) {
+    console.error('Edit option error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

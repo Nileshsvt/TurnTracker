@@ -3,6 +3,90 @@ import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
+// ==================== THEMES ====================
+const THEMES = {
+  light: {
+    name: 'Light',
+    icon: '☀️',
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    cardBg: '#ffffff',
+    cardText: '#333333',
+    headerBg: 'rgba(255, 255, 255, 0.1)',
+    headerText: '#ffffff'
+  },
+  dark: {
+    name: 'Dark',
+    icon: '🌙',
+    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+    cardBg: '#1e1e2e',
+    cardText: '#e0e0e0',
+    headerBg: 'rgba(0, 0, 0, 0.3)',
+    headerText: '#ffffff'
+  },
+  ocean: {
+    name: 'Ocean',
+    icon: '🌊',
+    background: 'linear-gradient(135deg, #0077b6 0%, #00b4d8 100%)',
+    cardBg: '#caf0f8',
+    cardText: '#03045e',
+    headerBg: 'rgba(255, 255, 255, 0.15)',
+    headerText: '#ffffff'
+  },
+  forest: {
+    name: 'Forest',
+    icon: '🌲',
+    background: 'linear-gradient(135deg, #2d6a4f 0%, #40916c 100%)',
+    cardBg: '#d8f3dc',
+    cardText: '#1b4332',
+    headerBg: 'rgba(255, 255, 255, 0.15)',
+    headerText: '#ffffff'
+  },
+  sunset: {
+    name: 'Sunset',
+    icon: '🌅',
+    background: 'linear-gradient(135deg, #f72585 0%, #ff8c00 100%)',
+    cardBg: '#fff0f3',
+    cardText: '#590d22',
+    headerBg: 'rgba(255, 255, 255, 0.15)',
+    headerText: '#ffffff'
+  },
+  midnight: {
+    name: 'Midnight',
+    icon: '🌌',
+    background: 'linear-gradient(135deg, #0d1b2a 0%, #1b263b 100%)',
+    cardBg: '#415a77',
+    cardText: '#e0e1dd',
+    headerBg: 'rgba(0, 0, 0, 0.3)',
+    headerText: '#ffffff'
+  }
+};
+
+// ==================== THEME SELECTOR ====================
+function ThemeSelector({ currentTheme, onThemeChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="theme-selector">
+      <button className="theme-toggle-btn" onClick={() => setIsOpen(!isOpen)}>
+        {THEMES[currentTheme].icon} Theme
+      </button>
+      {isOpen && (
+        <div className="theme-dropdown">
+          {Object.entries(THEMES).map(([key, theme]) => (
+            <button
+              key={key}
+              className={`theme-option ${currentTheme === key ? 'active' : ''}`}
+              onClick={() => { onThemeChange(key); setIsOpen(false); }}
+            >
+              {theme.icon} {theme.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== LOGIN PAGE ====================
 function LoginPage({ onLogin, onSwitchToRegister }) {
   const [username, setUsername] = useState('');
@@ -271,6 +355,54 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [inviteModal, setInviteModal] = useState(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('turntracker_theme') || 'light');
+  const [editingOption, setEditingOption] = useState(null);
+  const [editOptionName, setEditOptionName] = useState('');
+
+  // Apply theme to body
+  useEffect(() => {
+    const currentTheme = THEMES[theme];
+    document.body.style.background = currentTheme.background;
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('turntracker_theme', theme);
+  }, [theme]);
+
+  // PWA Install prompt handler
+  useEffect(() => {
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsInstalled(true);
+    }
+
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
 
   // Check for existing login
   useEffect(() => {
@@ -321,6 +453,28 @@ function App() {
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add option');
     }
+  };
+
+  // Edit option name
+  const handleEditOption = async (optionId) => {
+    if (!editOptionName.trim()) return;
+    
+    try {
+      const response = await axios.put(`${API_URL}/options/${optionId}`, {
+        name: editOptionName.trim(),
+        userId: user.userId
+      });
+      setOptions(options.map(opt => opt.id === optionId ? response.data : opt));
+      setEditingOption(null);
+      setEditOptionName('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to edit option');
+    }
+  };
+
+  const startEditingOption = (option) => {
+    setEditingOption(option.id);
+    setEditOptionName(option.name);
   };
 
   // Delete option (only if empty)
@@ -481,11 +635,17 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app theme-${theme}`}>
       <header className="app-header">
         <h1>🔄 TurnTracker</h1>
         <p>Smart Turn Management System</p>
         <div className="user-info">
+          <ThemeSelector currentTheme={theme} onThemeChange={setTheme} />
+          {installPrompt && !isInstalled && (
+            <button onClick={handleInstallClick} className="install-btn">
+              📲 Install
+            </button>
+          )}
           <span>👤 {user.username}</span>
           <button onClick={handleLogout} className="logout-btn">Logout</button>
         </div>
@@ -522,28 +682,50 @@ function App() {
             const userInOption = option.persons?.some(p => p.userId === user.userId);
             const isCurrentPerson = option.persons?.length > 0 && 
               option.persons[option.currentIndex]?.userId === user.userId;
+            const isEditing = editingOption === option.id;
 
             return (
               <div key={option.id} className="option-card">
                 <div className="option-header">
-                  <h3>
-                    <span>{getOptionIcon(option.name)}</span>
-                    {option.name}
-                  </h3>
-                  {option.persons?.length === 0 ? (
-                    <button 
-                      className="delete-option-btn"
-                      onClick={() => handleDeleteOption(option.id)}
-                    >
-                      🗑️ Delete
-                    </button>
-                  ) : userInOption && !option.pendingActions?.deleteOption && (
-                    <button 
-                      className="delete-option-btn"
-                      onClick={() => handleRequestDeleteOption(option.id)}
-                    >
-                      🗑️ Request Delete
-                    </button>
+                  {isEditing ? (
+                    <div className="edit-option-form">
+                      <input
+                        type="text"
+                        value={editOptionName}
+                        onChange={(e) => setEditOptionName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleEditOption(option.id);
+                          if (e.key === 'Escape') { setEditingOption(null); setEditOptionName(''); }
+                        }}
+                        autoFocus
+                      />
+                      <button className="save-edit-btn" onClick={() => handleEditOption(option.id)}>✓</button>
+                      <button className="cancel-edit-btn" onClick={() => { setEditingOption(null); setEditOptionName(''); }}>✕</button>
+                    </div>
+                  ) : (
+                    <h3 onClick={() => (userInOption || option.createdBy === user.userId) && startEditingOption(option)} 
+                        className={userInOption || option.createdBy === user.userId ? 'editable' : ''}>
+                      <span>{getOptionIcon(option.name)}</span>
+                      {option.name}
+                      {(userInOption || option.createdBy === user.userId) && <span className="edit-hint">✏️</span>}
+                    </h3>
+                  )}
+                  {!isEditing && (
+                    option.persons?.length === 0 ? (
+                      <button 
+                        className="delete-option-btn"
+                        onClick={() => handleDeleteOption(option.id)}
+                      >
+                        🗑️ Delete
+                      </button>
+                    ) : userInOption && !option.pendingActions?.deleteOption && (
+                      <button 
+                        className="delete-option-btn"
+                        onClick={() => handleRequestDeleteOption(option.id)}
+                      >
+                        🗑️ Request Delete
+                      </button>
+                    )
                   )}
                 </div>
 
