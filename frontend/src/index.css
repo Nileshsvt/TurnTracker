@@ -1160,6 +1160,44 @@ body {
 
 /* Responsive */
 @media (max-width: 600px) {
+  .app-header h1 {
+    font-size: 1.8rem;
+  }
+
+  .app-header p {
+    font-size: 0.9rem;
+  }
+
+  .user-info {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .user-info span {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+  }
+
+  .logout-btn,
+  .install-btn,
+  .notification-btn,
+  .theme-toggle-btn {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+  }
+
+  .notification-btn {
+    font-size: 1rem;
+    padding: 6px 10px;
+  }
+
+  .theme-dropdown {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
   .add-option-form {
     flex-direction: column;
   }
@@ -1176,5 +1214,29 @@ body {
   .invite-card {
     flex-direction: column;
     text-align: center;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 400px) {
+  .user-info {
+    gap: 5px;
+  }
+
+  .user-info span,
+  .logout-btn,
+  .install-btn,
+  .theme-toggle-btn {
+    padding: 5px 8px;
+    font-size: 0.75rem;
+  }
+
+  .notification-btn {
+    padding: 5px 8px;
+    font-size: 0.9rem;
+  }
+
+  .app-header h1 {
+    font-size: 1.5rem;
   }
 }
