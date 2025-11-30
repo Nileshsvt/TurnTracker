@@ -1,12 +1,23 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const webpush = require('web-push');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+// ==================== WEB PUSH SETUP ====================
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BFh1Hy2pJVzyj6ZZUsuq1_nO0OwZZbsiIO2o-7Pro-q44nfCQjIv9IrjAvSOPRe2p7LA-dQ0WNZPidEIiZdcYT0';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'wL3I1JOpjQeQ2yTYDU7WvgbjH3i3f65WI-TDTT0Z82M';
+
+webpush.setVapidDetails(
+  'mailto:turntracker@example.com',
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY
+);
 
 // ==================== MONGODB SETUP ====================
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb';
@@ -17,6 +28,7 @@ const userSchema = new mongoose.Schema({
   username: { type: String, required: true },
   password: { type: String, required: true },
   pendingInvites: { type: Array, default: [] },
+  pushSubscription: { type: Object, default: null }, // Store push subscription
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -40,6 +52,60 @@ const optionSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 const Option = mongoose.model('Option', optionSchema);
+
+// ==================== PUSH NOTIFICATION HELPER ====================
+async function sendPushNotification(userId, title, body, data = {}) {
+  try {
+    const user = await User.findOne({ oderId: userId });
+    if (!user || !user.pushSubscription) {
+      console.log(`No push subscription for user ${userId}`);
+      return false;
+    }
+
+    const payload = JSON.stringify({
+      title,
+      body,
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-72x72.png',
+      data: {
+        ...data,
+        url: '/' // URL to open when notification is clicked
+      }
+    });
+
+    await webpush.sendNotification(user.pushSubscription, payload);
+    console.log(`Push notification sent to user ${userId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error sending push to user ${userId}:`, error.message);
+    // If subscription is invalid, remove it
+    if (error.statusCode === 410 || error.statusCode === 404) {
+      await User.updateOne({ oderId: userId }, { pushSubscription: null });
+    }
+    return false;
+  }
+}
+
+// Send notification to multiple users
+async function notifyUsersForApproval(userIds, requesterName, actionType, optionName) {
+  const actionMessages = {
+    completeTurn: `wants to complete turn`,
+    joinPerson: `wants to join`,
+    leavePerson: `wants to leave`,
+    deletePerson: `wants to remove someone from`,
+    deleteOption: `wants to delete`
+  };
+
+  const message = actionMessages[actionType] || 'needs your approval';
+  const title = `🔔 Approval Needed - ${optionName}`;
+  const body = `${requesterName} ${message}. Tap to vote.`;
+
+  const results = await Promise.all(
+    userIds.map(userId => sendPushNotification(userId, title, body, { optionName, actionType }))
+  );
+
+  return results.filter(r => r).length; // Return count of successful notifications
+}
 
 // Connect to MongoDB
 mongoose.connect(MONGODB_URI)
@@ -529,6 +595,16 @@ app.post('/api/options/:id/request-complete', async (req, res) => {
     option.markModified('pendingActions');
     
     await option.save();
+
+    // Send push notifications to other members who need to approve
+    const otherUserIds = option.persons
+      .filter(p => p.userId !== userId)
+      .map(p => p.userId);
+    
+    if (otherUserIds.length > 0) {
+      notifyUsersForApproval(otherUserIds, user.username, 'completeTurn', option.name);
+    }
+
     res.json({ ...formatOption(option), message: 'Complete request created' });
   } catch (err) {
     console.error('Request complete error:', err);
@@ -587,6 +663,16 @@ app.post('/api/options/:id/request-leave', async (req, res) => {
     option.markModified('pendingActions');
     
     await option.save();
+
+    // Send push notifications to other members who need to approve
+    const otherUserIds = option.persons
+      .filter(p => p.userId !== userId)
+      .map(p => p.userId);
+    
+    if (otherUserIds.length > 0) {
+      notifyUsersForApproval(otherUserIds, user.username, 'leavePerson', option.name);
+    }
+
     res.json({ ...formatOption(option), message: 'Leave request created' });
   } catch (err) {
     console.error('Request leave error:', err);
@@ -641,6 +727,16 @@ app.post('/api/options/:optionId/request-delete-person/:targetUserId', async (re
     option.markModified('pendingActions');
     
     await option.save();
+
+    // Send push notifications to other members who need to approve
+    const otherUserIds = option.persons
+      .filter(p => p.userId !== userId)
+      .map(p => p.userId);
+    
+    if (otherUserIds.length > 0) {
+      notifyUsersForApproval(otherUserIds, user.username, 'deletePerson', option.name);
+    }
+
     res.json({ ...formatOption(option), message: 'Delete request created' });
   } catch (err) {
     console.error('Request delete person error:', err);
@@ -688,6 +784,16 @@ app.post('/api/options/:id/request-delete', async (req, res) => {
     option.markModified('pendingActions');
     
     await option.save();
+
+    // Send push notifications to other members who need to approve
+    const otherUserIds = option.persons
+      .filter(p => p.userId !== userId)
+      .map(p => p.userId);
+    
+    if (otherUserIds.length > 0) {
+      notifyUsersForApproval(otherUserIds, user.username, 'deleteOption', option.name);
+    }
+
     res.json({ ...formatOption(option), message: 'Delete option request created' });
   } catch (err) {
     console.error('Request delete option error:', err);
@@ -836,6 +942,74 @@ app.post('/api/options/:id/cancel-action', async (req, res) => {
   } catch (err) {
     console.error('Cancel action error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ==================== PUSH NOTIFICATION ROUTES ====================
+
+// Get VAPID public key
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Subscribe to push notifications
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { userId, subscription } = req.body;
+
+    if (!userId || !subscription) {
+      return res.status(400).json({ error: 'userId and subscription are required' });
+    }
+
+    await User.updateOne(
+      { oderId: userId },
+      { pushSubscription: subscription }
+    );
+
+    console.log(`Push subscription saved for user ${userId}`);
+    res.json({ success: true, message: 'Subscribed to push notifications' });
+  } catch (err) {
+    console.error('Push subscribe error:', err);
+    res.status(500).json({ error: 'Failed to subscribe' });
+  }
+});
+
+// Unsubscribe from push notifications
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    await User.updateOne(
+      { oderId: userId },
+      { pushSubscription: null }
+    );
+
+    console.log(`Push subscription removed for user ${userId}`);
+    res.json({ success: true, message: 'Unsubscribed from push notifications' });
+  } catch (err) {
+    console.error('Push unsubscribe error:', err);
+    res.status(500).json({ error: 'Failed to unsubscribe' });
+  }
+});
+
+// Test push notification (for debugging)
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const success = await sendPushNotification(
+      userId,
+      '🔔 Test Notification',
+      'Push notifications are working!',
+      { test: true }
+    );
+    res.json({ success, message: success ? 'Test notification sent' : 'Failed to send' });
+  } catch (err) {
+    console.error('Test push error:', err);
+    res.status(500).json({ error: 'Failed to send test notification' });
   }
 });
 

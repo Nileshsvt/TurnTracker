@@ -1,4 +1,4 @@
-const CACHE_NAME = 'turntracker-v1';
+const CACHE_NAME = 'turntracker-v2';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -80,28 +80,80 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Handle push notifications (for future use)
+// Handle push notifications
 self.addEventListener('push', (event) => {
-  const options = {
-    body: event.data ? event.data.text() : 'New notification from TurnTracker',
+  console.log('Push notification received');
+  
+  let notificationData = {
+    title: '🔔 TurnTracker',
+    body: 'New notification from TurnTracker',
     icon: '/icons/icon-192x192.png',
     badge: '/icons/icon-72x72.png',
-    vibrate: [100, 50, 100],
-    data: {
-      dateOfArrival: Date.now(),
-      primaryKey: 1
+    data: { url: '/' }
+  };
+
+  // Try to parse the push data
+  if (event.data) {
+    try {
+      const payload = event.data.json();
+      notificationData = {
+        title: payload.title || notificationData.title,
+        body: payload.body || notificationData.body,
+        icon: payload.icon || notificationData.icon,
+        badge: payload.badge || notificationData.badge,
+        data: payload.data || notificationData.data
+      };
+    } catch (e) {
+      // If not JSON, use text
+      notificationData.body = event.data.text();
     }
+  }
+
+  const options = {
+    body: notificationData.body,
+    icon: notificationData.icon,
+    badge: notificationData.badge,
+    vibrate: [200, 100, 200],
+    tag: 'turntracker-notification', // Group notifications
+    renotify: true, // Vibrate even for same tag
+    requireInteraction: true, // Don't auto-dismiss
+    actions: [
+      { action: 'open', title: '📱 Open App' },
+      { action: 'dismiss', title: '✕ Dismiss' }
+    ],
+    data: notificationData.data
   };
 
   event.waitUntil(
-    self.registration.showNotification('TurnTracker', options)
+    self.registration.showNotification(notificationData.title, options)
   );
 });
 
 // Handle notification clicks
 self.addEventListener('notificationclick', (event) => {
+  console.log('Notification clicked:', event.action);
   event.notification.close();
+
+  if (event.action === 'dismiss') {
+    return;
+  }
+
+  // Get the URL to open
+  const urlToOpen = event.notification.data?.url || '/';
+
   event.waitUntil(
-    clients.openWindow('/')
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        // Check if there's already a window open
+        for (const client of windowClients) {
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            return client.focus();
+          }
+        }
+        // Open a new window if none found
+        if (clients.openWindow) {
+          return clients.openWindow(urlToOpen);
+        }
+      })
   );
 });

@@ -353,6 +353,7 @@ function App() {
   const [options, setOptions] = useState([]);
   const [newOptionName, setNewOptionName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [optionsLoading, setOptionsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [inviteModal, setInviteModal] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -360,6 +361,8 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('turntracker_theme') || 'light');
   const [editingOption, setEditingOption] = useState(null);
   const [editOptionName, setEditOptionName] = useState('');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState('default');
 
   // Apply theme to body
   useEffect(() => {
@@ -368,6 +371,131 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('turntracker_theme', theme);
   }, [theme]);
+
+  // Check notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+      if (Notification.permission === 'granted') {
+        setNotificationsEnabled(localStorage.getItem('turntracker_notifications') === 'true');
+      }
+    }
+  }, []);
+
+  // Subscribe to push notifications
+  const subscribeToPush = async () => {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        alert('Push notifications are not supported in this browser');
+        return;
+      }
+
+      // Request permission
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      
+      if (permission !== 'granted') {
+        alert('Notification permission denied');
+        return;
+      }
+
+      // Get the service worker registration
+      const registration = await navigator.serviceWorker.ready;
+
+      // Get VAPID public key from server
+      const response = await axios.get(`${API_URL}/push/vapid-public-key`);
+      const vapidPublicKey = response.data.publicKey;
+
+      // Convert VAPID key to Uint8Array
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      };
+
+      // Subscribe to push
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+
+      // Send subscription to server
+      await axios.post(`${API_URL}/push/subscribe`, {
+        userId: user.userId,
+        subscription: subscription.toJSON()
+      });
+
+      setNotificationsEnabled(true);
+      localStorage.setItem('turntracker_notifications', 'true');
+      
+      // Show a test notification to confirm it works
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('✅ TurnTracker Notifications Enabled!', {
+          body: 'You will now receive notifications when approval is needed.',
+          icon: '/icons/icon-192x192.png'
+        });
+      }
+    } catch (err) {
+      console.error('Failed to subscribe to push:', err);
+      alert('Failed to enable notifications: ' + err.message);
+    }
+  };
+
+  // Test notification function (for debugging)
+  const testLocalNotification = () => {
+    if (!('Notification' in window)) {
+      alert('Notifications not supported');
+      return;
+    }
+    
+    if (Notification.permission !== 'granted') {
+      alert('Notification permission not granted. Current: ' + Notification.permission);
+      return;
+    }
+    
+    try {
+      const notification = new Notification('🔔 Test Notification', {
+        body: 'If you see this, notifications are working!',
+        icon: '/icons/icon-192x192.png',
+        tag: 'test'
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      console.log('Test notification sent');
+    } catch (err) {
+      alert('Error showing notification: ' + err.message);
+      console.error(err);
+    }
+  };
+
+  // Unsubscribe from push notifications
+  const unsubscribeFromPush = async () => {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      
+      if (subscription) {
+        await subscription.unsubscribe();
+      }
+
+      await axios.post(`${API_URL}/push/unsubscribe`, {
+        userId: user.userId
+      });
+
+      setNotificationsEnabled(false);
+      localStorage.setItem('turntracker_notifications', 'false');
+      alert('Push notifications disabled');
+    } catch (err) {
+      console.error('Failed to unsubscribe from push:', err);
+    }
+  };
 
   // PWA Install prompt handler
   useEffect(() => {
@@ -408,27 +536,49 @@ function App() {
   useEffect(() => {
     const savedUser = localStorage.getItem('turntracker_user');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        setUser(parsedUser);
+      } catch (e) {
+        // Invalid JSON in localStorage, clear it
+        localStorage.removeItem('turntracker_user');
+      }
     }
     setLoading(false);
   }, []);
 
   // Fetch options
-  const fetchOptions = useCallback(async () => {
+  const fetchOptions = useCallback(async (isInitialLoad = false) => {
+    if (!user) return; // Don't fetch if no user
+    
+    if (isInitialLoad) {
+      setOptionsLoading(true);
+    }
+    
     try {
       const response = await axios.get(`${API_URL}/options`);
       setOptions(response.data);
       setError(null);
     } catch (err) {
       setError('Failed to fetch options');
+    } finally {
+      if (isInitialLoad) {
+        setOptionsLoading(false);
+      }
     }
-  }, []);
+  }, [user]);
 
+  // Fetch options when user changes and set up polling
   useEffect(() => {
     if (user) {
-      fetchOptions();
-      const interval = setInterval(fetchOptions, 5000);
+      // Fetch immediately when user is set (initial load)
+      fetchOptions(true);
+      // Set up polling interval (not initial loads)
+      const interval = setInterval(() => fetchOptions(false), 5000);
       return () => clearInterval(interval);
+    } else {
+      // Clear options when user logs out
+      setOptions([]);
     }
   }, [user, fetchOptions]);
 
@@ -641,6 +791,18 @@ function App() {
         <p>Smart Turn Management System</p>
         <div className="user-info">
           <ThemeSelector currentTheme={theme} onThemeChange={setTheme} />
+          
+          {/* Notification Toggle Button */}
+          {'Notification' in window && (
+            <button 
+              onClick={notificationsEnabled ? unsubscribeFromPush : subscribeToPush}
+              className={`notification-btn ${notificationsEnabled ? 'enabled' : ''}`}
+              title={notificationsEnabled ? 'Notifications enabled - Click to disable' : 'Enable push notifications'}
+            >
+              {notificationsEnabled ? '🔔' : '🔕'}
+            </button>
+          )}
+
           {installPrompt && !isInstalled && (
             <button onClick={handleInstallClick} className="install-btn">
               📲 Install
@@ -671,7 +833,12 @@ function App() {
         </form>
       </section>
 
-      {options.length === 0 ? (
+      {optionsLoading ? (
+        <div className="no-options">
+          <h3>⏳ Loading options...</h3>
+          <p>Please wait while we fetch your data.</p>
+        </div>
+      ) : options.length === 0 ? (
         <div className="no-options">
           <h3>No options yet!</h3>
           <p>Add your first option above to get started.</p>
