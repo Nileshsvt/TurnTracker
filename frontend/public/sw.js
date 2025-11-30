@@ -1,10 +1,11 @@
-const CACHE_NAME = 'turntracker-v2';
+const CACHE_NAME = 'turntracker-v3';
 const urlsToCache = [
   '/',
   '/index.html',
   '/manifest.json',
   '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png'
+  '/icons/icon-512x512.png',
+  '/icons/badge-72x72.png'
 ];
 
 // Install event - cache static assets
@@ -88,7 +89,7 @@ self.addEventListener('push', (event) => {
     title: '🔔 TurnTracker',
     body: 'New notification from TurnTracker',
     icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-72x72.png',
+    badge: '/icons/badge-72x72.png',
     data: { url: '/' }
   };
 
