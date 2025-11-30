@@ -433,45 +433,17 @@ function App() {
       setNotificationsEnabled(true);
       localStorage.setItem('turntracker_notifications', 'true');
       
-      // Show a test notification to confirm it works
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('✅ TurnTracker Notifications Enabled!', {
+      // Show a test notification to confirm it works (use service worker for mobile compatibility)
+      if (Notification.permission === 'granted') {
+        registration.showNotification('✅ TurnTracker Notifications Enabled!', {
           body: 'You will now receive notifications when approval is needed.',
-          icon: '/icons/icon-192x192.png'
+          icon: '/icons/icon-192x192.png',
+          badge: '/icons/icon-72x72.png'
         });
       }
     } catch (err) {
       console.error('Failed to subscribe to push:', err);
       alert('Failed to enable notifications: ' + err.message);
-    }
-  };
-
-  // Test notification function (for debugging)
-  const testLocalNotification = () => {
-    if (!('Notification' in window)) {
-      alert('Notifications not supported');
-      return;
-    }
-    
-    if (Notification.permission !== 'granted') {
-      alert('Notification permission not granted. Current: ' + Notification.permission);
-      return;
-    }
-    
-    try {
-      const notification = new Notification('🔔 Test Notification', {
-        body: 'If you see this, notifications are working!',
-        icon: '/icons/icon-192x192.png',
-        tag: 'test'
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-      console.log('Test notification sent');
-    } catch (err) {
-      alert('Error showing notification: ' + err.message);
-      console.error(err);
     }
   };
 
